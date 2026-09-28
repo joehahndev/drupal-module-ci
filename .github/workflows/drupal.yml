@@ -146,6 +146,10 @@ jobs:
               <exclude-pattern>*.yml</exclude-pattern>
               <exclude-pattern>*.md</exclude-pattern>
             </rule>
+            <rule ref="Drupal.Files.TxtFileLineLength.TooLong">
+              <exclude-pattern>*.md</exclude-pattern>
+              <exclude-pattern>*.txt</exclude-pattern>
+            </rule>
           </ruleset>
           RULESET
           vendor/bin/phpcs \

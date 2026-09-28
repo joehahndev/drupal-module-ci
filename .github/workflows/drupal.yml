@@ -132,10 +132,25 @@ jobs:
       - name: phpcs
         working-directory: site
         run: |
+          cat > phpcs.xml <<'RULESET'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <ruleset name="drupal-module-ci">
+            <exclude-pattern>*/vendor/*</exclude-pattern>
+            <exclude-pattern>*/node_modules/*</exclude-pattern>
+            <exclude-pattern>*.min.js</exclude-pattern>
+            <exclude-pattern>*.min.css</exclude-pattern>
+            <rule ref="Drupal"/>
+            <rule ref="DrupalPractice"/>
+            <!-- Long lines in YAML and Markdown are usually URLs or tables. -->
+            <rule ref="Drupal.Files.LineLength.TooLong">
+              <exclude-pattern>*.yml</exclude-pattern>
+              <exclude-pattern>*.md</exclude-pattern>
+            </rule>
+          </ruleset>
+          RULESET
           vendor/bin/phpcs \
-            --standard=Drupal,DrupalPractice \
+            --standard=phpcs.xml \
             --extensions="${{ inputs.phpcs-extensions }}" \
-            --ignore='*/vendor/*,*/node_modules/*,*.min.js,*.min.css' \
             -p ${{ steps.map.outputs.dests }}
 
       - name: phpstan

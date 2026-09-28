@@ -1,0 +1,191 @@
+name: Drupal module CI
+
+# Reusable workflow. A module or theme repo calls this with `uses:` and gets
+# phpcs (Drupal + DrupalPractice), phpstan (phpstan-drupal + deprecation
+# rules) and PHPUnit against a freshly composer-built Drupal site, across a
+# PHP x Drupal matrix. The caller never installs core itself.
+#
+# See README.md for the caller snippet.
+
+on:
+  workflow_call:
+    inputs:
+      install-map:
+        description: >-
+          One `source:destination` pair per line. Source is relative to the
+          caller repo root, destination is relative to the built site root.
+          Empty means the whole repo is one module named after the repo.
+        type: string
+        default: ''
+      php-versions:
+        description: JSON array of PHP versions.
+        type: string
+        default: '["8.3", "8.4"]'
+      drupal-versions:
+        description: JSON array of Composer constraints for drupal/core.
+        type: string
+        default: '["^10.6", "^11.4"]'
+      phpstan-level:
+        description: PHPStan rule level.
+        type: string
+        default: '6'
+      phpstan-ignore:
+        description: >-
+          Extra ignoreErrors entries, one per line. A line starting with
+          `identifier:` is an identifier, anything else is a message regex.
+        type: string
+        default: ''
+      phpcs-extensions:
+        description: File extensions phpcs scans.
+        type: string
+        default: 'php,module,inc,install,test,profile,theme,css,info,txt,md,yml'
+      phpunit:
+        description: Run PHPUnit when a tests directory exists.
+        type: boolean
+        default: true
+      composer-require:
+        description: >-
+          Extra packages to composer require into the site before testing
+          (space separated), for module dependencies.
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: PHP ${{ matrix.php }} / Drupal ${{ matrix.drupal }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ${{ fromJSON(inputs.php-versions) }}
+        drupal: ${{ fromJSON(inputs.drupal-versions) }}
+
+    env:
+      COMPOSER_NO_INTERACTION: '1'
+      COMPOSER_MEMORY_LIMIT: '-1'
+
+    steps:
+      - name: Check out the calling repo
+        uses: actions/checkout@v4
+        with:
+          path: repo
+
+      - name: Set up PHP ${{ matrix.php }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: gd, pdo_sqlite, sqlite3, mbstring, xml, zip, opcache
+          coverage: none
+          tools: composer:v2
+
+      - name: Cache Composer downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/composer
+          key: composer-${{ runner.os }}-php${{ matrix.php }}-drupal${{ matrix.drupal }}-${{ hashFiles('repo/composer.json') }}
+          restore-keys: |
+            composer-${{ runner.os }}-php${{ matrix.php }}-drupal${{ matrix.drupal }}-
+            composer-${{ runner.os }}-php${{ matrix.php }}-
+
+      - name: Build a Drupal site
+        run: |
+          composer create-project "drupal/recommended-project:${{ matrix.drupal }}" site --no-install
+          cd site
+          composer config --no-plugins allow-plugins.phpstan/extension-installer true
+          composer config --no-plugins allow-plugins.dealerdirect/phpcodesniffer-composer-installer true
+          composer require --dev --no-update \
+            "drupal/core-dev:${{ matrix.drupal }}" \
+            phpstan/phpstan-deprecation-rules
+          if [ -n "${{ inputs.composer-require }}" ]; then
+            composer require --no-update ${{ inputs.composer-require }}
+          fi
+          composer install --prefer-dist --no-progress
+          composer show drupal/core | sed -n '1,3p'
+
+      - name: Copy the module into the site
+        id: map
+        shell: bash
+        run: |
+          set -euo pipefail
+          MAP="${{ inputs.install-map }}"
+          if [ -z "$MAP" ]; then
+            MAP=".:web/modules/custom/${{ github.event.repository.name }}"
+          fi
+          DESTS=""
+          while IFS= read -r line; do
+            line="$(echo "$line" | xargs)"
+            [ -z "$line" ] && continue
+            src="${line%%:*}"
+            dest="${line#*:}"
+            mkdir -p "site/$dest"
+            rsync -a --exclude .git --exclude vendor --exclude node_modules "repo/$src/" "site/$dest/"
+            DESTS="$DESTS $dest"
+          done <<< "$MAP"
+          echo "dests=$DESTS" >> "$GITHUB_OUTPUT"
+          echo "Installed into:$DESTS"
+
+      - name: phpcs
+        working-directory: site
+        run: |
+          vendor/bin/phpcs \
+            --standard=Drupal,DrupalPractice \
+            --extensions="${{ inputs.phpcs-extensions }}" \
+            --ignore='*/vendor/*,*/node_modules/*,*.min.js,*.min.css' \
+            -p ${{ steps.map.outputs.dests }}
+
+      - name: phpstan
+        working-directory: site
+        shell: bash
+        run: |
+          {
+            echo "parameters:"
+            echo "  level: ${{ inputs.phpstan-level }}"
+            echo "  paths:"
+            for d in ${{ steps.map.outputs.dests }}; do echo "    - $d"; done
+            echo "  excludePaths:"
+            echo "    analyseAndScan:"
+            echo "      - '*/vendor/*'"
+            echo "      - '*/node_modules/*'"
+            echo "  fileExtensions: [php, module, install, inc, profile, theme, engine]"
+            echo "  reportUnmatchedIgnoredErrors: false"
+            echo "  ignoreErrors:"
+            echo "    - identifier: missingType.iterableValue"
+            while IFS= read -r line; do
+              line="$(echo "$line" | xargs)"
+              [ -z "$line" ] && continue
+              case "$line" in
+                identifier:*) echo "    - $line" ;;
+                *) echo "    - '$line'" ;;
+              esac
+            done <<< "${{ inputs.phpstan-ignore }}"
+          } > phpstan.neon
+          cat phpstan.neon
+          vendor/bin/phpstan analyse --no-progress --memory-limit=1G
+
+      - name: PHPUnit
+        if: ${{ inputs.phpunit }}
+        working-directory: site
+        shell: bash
+        env:
+          SIMPLETEST_BASE_URL: http://localhost:8888
+          SIMPLETEST_DB: sqlite://localhost/sites/default/files/test.sqlite
+          SYMFONY_DEPRECATIONS_HELPER: disabled
+        run: |
+          set -euo pipefail
+          TESTDIRS=""
+          for d in ${{ steps.map.outputs.dests }}; do
+            [ -d "$d/tests" ] && TESTDIRS="$TESTDIRS $d/tests"
+          done
+          if [ -z "$TESTDIRS" ]; then
+            echo "No tests directory in any installed path; skipping PHPUnit."
+            exit 0
+          fi
+          mkdir -p web/sites/default/files web/sites/simpletest/browser_output
+          chmod -R a+w web/sites
+          export BROWSERTEST_OUTPUT_DIRECTORY="$PWD/web/sites/simpletest/browser_output"
+          php -S localhost:8888 -t web web/.ht.router.php > /tmp/php-server.log 2>&1 &
+          sleep 1
+          vendor/bin/phpunit -c web/core --do-not-cache-result $TESTDIRS

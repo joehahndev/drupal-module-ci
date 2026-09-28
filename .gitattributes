@@ -1,0 +1,59 @@
+# Line endings: the REPOSITORY decides, not each machine's git config.
+#
+# This work happens across Windows, WSL, mingw64/Git Bash and Linux, and
+# relying on core.autocrlf being set correctly on every one of them is how a
+# CRLF file eventually gets committed. `eol=lf` checks out LF everywhere,
+# including Windows, so every host sees the same bytes.
+#
+# LF specifically, not CRLF, because:
+#   - the shell scripts here are EXECUTED on Linux, and a CRLF shebang fails
+#     with `bad interpreter: /bin/bash^M` — an error that reads like a missing
+#     interpreter rather than a line-ending problem;
+#   - Renoise tool Lua, Python generators and CMake all run on the Linux host;
+#   - every editor worth using on Windows handles LF (VS Code, VS 2022, and
+#     Notepad since 2018).
+* text=auto eol=lf
+
+# Executed on Linux — must be LF, no exceptions.
+*.sh    text eol=lf
+*.bash  text eol=lf
+
+# Binary. `text=auto` usually detects these, but being explicit means a
+# mis-detection can never corrupt them. The Renoise formats matter most:
+# .xrns/.xrni/.xrnx are ZIP archives, and a single byte substitution makes them
+# unopenable.
+*.xrns  binary
+*.xrni  binary
+*.xrnx  binary
+*.wav   binary
+*.aiff  binary
+*.flac  binary
+*.mp3   binary
+*.ogg   binary
+*.sf2   binary
+*.it    binary
+*.mod   binary
+*.xm    binary
+*.s3m   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.pdf   binary
+*.zip   binary
+*.gz    binary
+*.db    binary
+*.sqlite binary
+*.ttf   binary
+*.otf   binary
+*.so    binary
+*.dll   binary
+*.exe   binary
+*.vst3  binary
+*.o     binary
+*.a     binary
+
+# Generated: keep them out of diffs and out of language stats, but still
+# versioned — they are the contract every consumer reads.
+dist/manifest.json      -diff
+**/src/gen/*            linguist-generated=true

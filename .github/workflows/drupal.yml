@@ -98,7 +98,7 @@ jobs:
           composer config --no-plugins allow-plugins.dealerdirect/phpcodesniffer-composer-installer true
           composer require --dev --no-update \
             "drupal/core-dev:${{ matrix.drupal }}" \
-            phpstan/phpstan-deprecation-rules
+            "phpstan/phpstan-deprecation-rules:^1.1 || ^2.0"
           if [ -n "${{ inputs.composer-require }}" ]; then
             composer require --no-update ${{ inputs.composer-require }}
           fi

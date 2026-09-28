@@ -102,7 +102,9 @@ jobs:
           if [ -n "${{ inputs.composer-require }}" ]; then
             composer require --no-update ${{ inputs.composer-require }}
           fi
-          composer install --prefer-dist --no-progress
+          # recommended-project ships a lock file; update resolves the added
+          # dev packages against it in one solve.
+          composer update --prefer-dist --no-progress
           composer show drupal/core | sed -n '1,3p'
 
       - name: Copy the module into the site

@@ -207,6 +207,16 @@ jobs:
           mkdir -p web/sites/default/files web/sites/simpletest/browser_output
           chmod -R a+w web/sites
           export BROWSERTEST_OUTPUT_DIRECTORY="$PWD/web/sites/simpletest/browser_output"
-          php -S localhost:8888 -t web web/.ht.router.php > /tmp/php-server.log 2>&1 &
+          (cd web && php -S localhost:8888 .ht.router.php > /tmp/php-server.log 2>&1 &)
           sleep 1
           vendor/bin/phpunit -c web/core --do-not-cache-result $TESTDIRS
+
+      - name: Built-in server log (on failure)
+        if: ${{ failure() }}
+        run: |
+          echo "::group::php -S request log"
+          tail -n 200 /tmp/php-server.log || true
+          echo "::endgroup::"
+          echo "::group::watchdog-style PHP errors from the test sites"
+          find site/web/sites/simpletest -name 'error.log' -exec tail -n 50 {} + 2>/dev/null || true
+          echo "::endgroup::"
